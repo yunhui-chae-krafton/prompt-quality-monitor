@@ -1,0 +1,14 @@
+{
+  "name": "prompt-quality-monitor",
+  "plugins": [
+    {
+      "name": "prompt-quality-monitor",
+      "description": "Extracts the prompts you actually typed from your Claude Code session logs, classifies each turn, scores the instruction turns on specificity, structure and constraints, optionally grades a sample with the paper's expert rubric, and reports which habits track with rework.",
+      "version": "0.1.0",
+      "source": {
+        "source": "local",
+        "path": "./"
+      }
+    }
+  ]
+}

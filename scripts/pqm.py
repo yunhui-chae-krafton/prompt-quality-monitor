@@ -82,17 +82,64 @@ def cmd_analyze(args):
 def cmd_grade(args):
     result = _load(args)
     os.makedirs(args.out, exist_ok=True)
-    cache = os.path.join(args.out, "llm-cache.json")
+    cache_path = os.path.join(args.out, "llm-cache.json")
+
+    if args.ingest is not None:
+        path = args.ingest or os.path.join(args.out, "grade-response.json")
+        info = llm_grade.ingest(path, cache_path)
+        print(f"채점 반영: {info['ingested']}개 (건너뜀 {info['skipped']}, "
+              f"누적 {info['graded']})")
+        return _refresh(args)
+
+    if args.backend == "agent":
+        return _emit_request(args, result, cache_path)
+
     info = llm_grade.grade(
-        result["prompts"], cache, limit=args.limit, batch_size=args.batch,
-        model=args.model, progress=lambda m: print(m, flush=True),
+        result["prompts"], cache_path, limit=args.limit, batch_size=args.batch,
+        backend=args.backend, model=args.model, command=args.command,
+        progress=lambda m: print(m, flush=True),
     )
-    print(f"채점 완료: 신규 {info['new']}개, 누적 {info['graded']}개, "
-          f"이번 비용 ${info['cost_usd']:.2f}")
-    _persist(result, args.out)
-    with open(os.path.join(args.out, "report.md"), "w") as handle:
-        handle.write(report.render(result))
+    cost = (f", 이번 비용 ${info['cost_usd']:.2f}"
+            if args.backend == "claude" else "")
+    print(f"채점 완료: 신규 {info['new']}개, 누적 {info['graded']}개{cost}")
+    _write_outputs(result, args.out)
     return result
+
+
+def _emit_request(args, result, cache_path):
+    """Hand the grading job to whatever agent is running this."""
+    cache = llm_grade.load_cache(cache_path)
+    todo = llm_grade.pending(result["prompts"], cache, args.limit)
+    if not todo:
+        print(f"채점할 새 프롬프트가 없습니다 (누적 {len(cache)}개).")
+        return result
+
+    request_path = os.path.join(args.out, "grade-request.json")
+    llm_grade.write_request(todo, request_path, batch_size=args.batch)
+    print(
+        f"채점 요청 {len(todo)}개를 준비했습니다.\n"
+        f"  요청: {request_path}\n"
+        f"  이 파일의 rubric 을 items 에 적용해 결과를 아래에 쓰십시오.\n"
+        f"  응답: {os.path.join(args.out, 'grade-response.json')}\n"
+        f"       [{{\"id\": \"<items의 id 그대로>\", \"coherence\": 0-10, "
+        f"\"complexity\": 0-10, \"clarity\": 0-10, \"issue\": \"\", "
+        f"\"rewrite\": \"\"}}, ...]\n"
+        f"  반영: pqm.py grade --ingest"
+    )
+    return result
+
+
+def _refresh(args):
+    """Re-run the analysis so reports pick up newly ingested grades."""
+    result = _load(args)
+    _write_outputs(result, args.out)
+    return result
+
+
+def _write_outputs(result, out_dir):
+    _persist(result, out_dir)
+    with open(os.path.join(out_dir, "report.md"), "w") as handle:
+        handle.write(report.render(result))
 
 
 def cmd_dashboard(args):
@@ -136,8 +183,22 @@ def main():
                                   ("run", cmd_run, "채점 + 대시보드")):
         sub = subs.add_parser(name, parents=[common], help=help_text)
         sub.add_argument("--limit", type=int, default=300, help="채점 표본 크기")
-        sub.add_argument("--batch", type=int, default=12, help="한 호출당 프롬프트 수")
-        sub.add_argument("--model", default="claude-sonnet-5")
+        sub.add_argument("--batch", type=int, default=12, help="한 배치당 프롬프트 수")
+        sub.add_argument(
+            "--backend", choices=llm_grade.BACKENDS, default="agent",
+            help="agent: 이 스킬을 실행 중인 에이전트가 채점 (기본, 추가 비용 없음). "
+                 "claude: claude CLI 로 무인 채점. "
+                 "command: --command 로 지정한 임의의 명령에 위임.")
+        sub.add_argument("--command",
+                         help="backend=command 일 때 실행할 명령. "
+                              "stdin 으로 프롬프트를 받고 stdout 으로 JSON 배열을 낸다. "
+                              "예: 'codex exec -' / 'opencode run -' / 'ollama run qwen3'")
+        sub.add_argument("--ingest", nargs="?", const="", default=None,
+                         metavar="PATH",
+                         help="에이전트가 쓴 응답 파일을 캐시에 반영 "
+                              "(생략 시 <out>/grade-response.json)")
+        sub.add_argument("--model", default="claude-sonnet-5",
+                         help="backend=claude 일 때 사용할 모델")
         sub.set_defaults(func=func)
 
     sub = subs.add_parser("dashboard", parents=[common],
