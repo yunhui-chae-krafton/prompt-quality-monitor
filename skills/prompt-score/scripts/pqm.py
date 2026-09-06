@@ -94,11 +94,14 @@ def cmd_grade(args):
     if args.backend == "agent":
         return _emit_request(args, result, cache_path)
 
-    info = llm_grade.grade(
-        result["prompts"], cache_path, limit=args.limit, batch_size=args.batch,
-        backend=args.backend, model=args.model, command=args.command,
-        progress=lambda m: print(m, flush=True),
-    )
+    try:
+        info = llm_grade.grade(
+            result["prompts"], cache_path, limit=args.limit,
+            batch_size=args.batch, backend=args.backend, model=args.model,
+            command=args.command, progress=lambda m: print(m, flush=True),
+        )
+    except ValueError as exc:
+        sys.exit(str(exc))
     cost = (f", 이번 비용 ${info['cost_usd']:.2f}"
             if args.backend == "claude" else "")
     print(f"채점 완료: 신규 {info['new']}개, 누적 {info['graded']}개{cost}")

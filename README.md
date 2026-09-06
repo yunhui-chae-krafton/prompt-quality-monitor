@@ -63,17 +63,50 @@ r = .02로 사실상 없다 — 경로·식별자·수치를 세는 일과 "지�
 
 ## 설치
 
-Claude Code 플러그인이다. 두 줄이면 끝난다.
+의존성이 0개다. 전부 파이썬 표준 라이브러리라 시스템에 깔린 `python3`로 그대로 돈다.
+pip도 venv도 필요 없고, 사내 프록시에 pip이 막혀 있어도 상관없다.
+
+### Claude Code
 
 ```
 /plugin marketplace add yunhui-chae-krafton/prompt-quality-monitor
 /plugin install prompt-quality-monitor@prompt-quality-monitor
 ```
 
-이후 `/prompt-score` 또는 그냥 "내 프롬프트 분석해줘"라고 하면 된다.
+### Codex
 
-**pip도 venv도 필요 없다.** 서드파티 의존성이 0개이고 전부 표준 라이브러리라, 시스템에 깔린
-`python3`로 그대로 돈다. 사내 프록시 때문에 pip이 막혀 있어도 상관없다.
+```bash
+codex plugin marketplace add yunhui-chae-krafton/prompt-quality-monitor
+codex plugin add prompt-quality-monitor@prompt-quality-monitor
+```
+
+### OpenCode
+
+OpenCode의 plugin은 npm JS 모듈이라 체계가 다르다. 스킬로 붙인다.
+
+```bash
+git clone https://github.com/yunhui-chae-krafton/prompt-quality-monitor ~/prompt-quality-monitor
+ln -s ~/prompt-quality-monitor/skills/prompt-score ~/.config/opencode/skills/prompt-score
+```
+
+스크립트가 스킬 디렉토리 안에 들어 있어서 심볼릭 링크 하나로 코드까지 따라온다.
+
+### 아무것도 설치하지 않고
+
+```bash
+git clone https://github.com/yunhui-chae-krafton/prompt-quality-monitor
+cd prompt-quality-monitor
+python3 pqm.py analyze
+```
+
+### 왜 매니페스트가 두 벌인가
+
+`.claude-plugin/marketplace.json`과 `.agents/plugins/marketplace.json`이 같은 내용을 담고
+있다. Claude Code와 Codex가 `source` 필드에서 갈리기 때문이다 — Claude Code는 문자열
+`"./"`를 받고 `{"source":"local","path":"./"}`를 거부하며, Codex는 정반대로 문자열
+형태에서 플러그인을 0개로 해석한다. 한 형태로 둘 다 만족시킬 수 없어서 각자 자기 위치에서
+자기 모양을 읽게 했다. Codex는 `.agents/plugins/`를 먼저 보고 없을 때만 `.claude-plugin/`으로
+내려간다.
 
 ### 선택: 한국어 형태소 분석기
 
@@ -86,65 +119,87 @@ pip install kiwipiepy
 78.9(형태소) 대 189.7(정규식)로 2.4배 차이가 났다. 세션 간 비교는 폴백으로도 유효하지만,
 절대값을 문헌과 견주려면 필요하다.
 
-### 플러그인 없이 쓰기
-
-레포를 받아 그냥 실행해도 된다.
-
-```bash
-git clone https://github.com/yunhui-chae-krafton/prompt-quality-monitor
-cd prompt-quality-monitor
-python3 scripts/pqm.py analyze
-```
-
 ## 사용
 
 ```bash
-python3 scripts/pqm.py analyze                 # 결정론적 지표, 전량, 무료
-python3 scripts/pqm.py analyze --print-report   # 리포트를 표준출력으로
-
-python3 scripts/pqm.py grade --limit 240        # LLM 루브릭 채점 (층화 표본)
-python3 scripts/pqm.py dashboard                # HTML 대시보드
-python3 scripts/pqm.py run --limit 240          # 채점 + 대시보드
-
-# 범위 좁히기
-python3 scripts/pqm.py analyze --project my-repo --since 2026-08-01
+python3 pqm.py analyze                 # 결정론적 지표, 전량, 무료
+python3 pqm.py analyze --print-report   # 리포트를 표준출력으로
+python3 pqm.py dashboard                # HTML 대시보드
 ```
 
 출력은 `~/.prompt-quality-monitor/`에 쌓인다 (`analysis.json`, `report.md`, `dashboard.html`,
 `llm-cache.json`). `--out` 또는 `$PQM_OUT`으로 바꿀 수 있다. 플러그인 설치 디렉토리는 버전이
-올라갈 때마다 통째로 교체되므로, 돈 주고 만든 채점 캐시를 거기 두지 않으려고 홈에 쓴다.
+올라갈 때마다 통째로 교체되므로, 애써 만든 채점 캐시를 거기 두지 않으려고 홈에 쓴다.
 
-**비용.** 채점은 프롬프트 해시로 캐시되므로 재실행은 새 프롬프트에만 돈이 든다. 20개 배치당
-약 $0.18 (Sonnet 5, MCP 비활성). 240개 표본이면 약 $2. `--model claude-haiku-4-5-20251001`로
-더 낮출 수 있다. `analyze`만 쓰면 네트워크 호출이 0이다.
+범위는 `--project <부분일치>`와 `--since YYYY-MM-DD`로 좁힌다.
+
+## 루브릭 채점: 백엔드 세 가지
+
+특정 벤더의 CLI에 채점을 묶어두면, 그 구독이 없는 사람은 이 층 전체를 못 쓴다. 그래서
+채점기를 갈아끼울 수 있게 했다.
+
+**`--backend agent` (기본).** 채점 요청 파일을 쓰고 멈춘다. 스킬을 실행 중인 에이전트가
+자기 세션 안에서 채점하고 결과를 돌려준다. **추가 비용도 API 키도 별도 구독도 없다** —
+읽을 주체가 이미 거기 있기 때문이다. 어떤 제품에서든 스킬만 돌면 동작한다.
+
+```bash
+python3 pqm.py grade --limit 240      # 요청 생성 → 에이전트가 채점
+python3 pqm.py grade --ingest         # 결과 반영
+```
+
+요청은 `{rubric, items:[{id, prompt}]}`이고 응답은
+`[{id, coherence, complexity, clarity, issue, rewrite}]`다. `id`는 내용 해시라서 순서가
+바뀌어도, 일부만 채점해도, 여러 번에 나눠 해도 정확히 병합된다.
+
+**`--backend claude`.** `claude` CLI로 무인 채점. 20개 배치당 약 $0.18 (Sonnet 5, MCP 비활성),
+240개면 약 $2.
+
+**`--backend command`.** stdin으로 프롬프트를 받고 stdout으로 JSON 배열을 내는 아무 명령에나
+위임한다. 다른 에이전트 CLI, 로컬 모델, 사내 게이트웨이 래퍼가 다 여기 들어온다.
+
+```bash
+python3 pqm.py grade --backend command --command 'codex exec -'
+python3 pqm.py grade --backend command --command 'ollama run qwen3'
+```
+
+어느 백엔드를 쓰든 결과는 프롬프트 해시로 같은 캐시에 쌓이므로, 재실행은 새 프롬프트에만
+비용이 든다. `analyze`만 쓰면 네트워크 호출이 0이다.
 
 **표본 추출.** 무작위가 아니라 점수 10분위 층화다. 무작위로 뽑으면 표본이 분포 한가운데로 쏠려
 정작 알고 싶은 양 끝단에 대해 아무 말도 못 한다.
 
 ## 프라이버시
 
-프롬프트 원문이 LLM 채점 호출에 실린다. 본인 Claude 계정으로 나가므로 평소 Claude Code를 쓰는 것과
-같은 신뢰 경계지만, 사내 정보가 담긴 프롬프트를 포함한다는 사실은 알고 쓰는 게 맞다.
-`pqm.py analyze`만 쓰면 네트워크 호출이 전혀 없다.
+`analyze`와 `dashboard`는 네트워크 호출이 전혀 없다. 세션 로그를 읽어 로컬에 파일을 쓸 뿐이다.
+
+채점은 백엔드에 따라 다르다. 기본값인 `--backend agent`는 **프롬프트가 지금 쓰고 있는 세션 밖으로
+나가지 않는다** — 이미 그 대화 안에 있는 에이전트가 채점한다. `--backend claude`나
+`--backend command`를 쓰면 프롬프트 원문이 해당 백엔드로 나가므로, 사내 정보가 담긴 프롬프트를
+포함한다는 점을 알고 골라야 한다.
 
 ## 구조
 
 ```
+pqm.py                        루트 런처 (clone 후 바로 실행용)
 .claude-plugin/
-  plugin.json           플러그인 매니페스트
-  marketplace.json      /plugin marketplace add 대상
+  plugin.json                 플러그인 매니페스트 (Claude Code·Codex 공용)
+  marketplace.json            Claude Code용 마켓플레이스
+.agents/plugins/
+  marketplace.json            Codex용 마켓플레이스
 skills/prompt-score/
-  SKILL.md              /prompt-score 진입점 + 결과 해석 규칙
-scripts/
-  pqm.py                CLI
-  pqm/extract.py        세션 JSONL → 사람이 친 프롬프트
-  pqm/rubric.py         턴 분류 + 원시 특징 추출
-  pqm/lexical.py        MTLD / HD-D + 한국어 토크나이저
-  pqm/analyze.py        백분위 환산, 세션 집계, 상관·편상관
-  pqm/llm_grade.py      층화 표본 LLM 루브릭 채점 (캐시)
-  pqm/report.py         마크다운 리포트
-  pqm/dashboard.py      자체 완결 HTML 대시보드
+  SKILL.md                    진입점 + 채점 절차 + 결과 해석 규칙
+  scripts/pqm.py              CLI
+  scripts/pqm/extract.py      세션 JSONL → 사람이 친 프롬프트
+  scripts/pqm/rubric.py       턴 분류 + 원시 특징 추출
+  scripts/pqm/lexical.py      MTLD / HD-D + 한국어 토크나이저
+  scripts/pqm/analyze.py      백분위 환산, 세션 집계, 상관·편상관
+  scripts/pqm/llm_grade.py    채점 백엔드 3종 + 캐시
+  scripts/pqm/report.py       마크다운 리포트
+  scripts/pqm/dashboard.py    자체 완결 HTML 대시보드
 ```
+
+스크립트가 `skills/prompt-score/` 안에 있는 것은 의도한 배치다. 스킬 디렉토리만 심볼릭
+링크해도 코드가 함께 따라오므로, 플러그인 체계가 없는 하네스(OpenCode 등)에서도 그대로 돈다.
 
 ## 알려진 한계
 
