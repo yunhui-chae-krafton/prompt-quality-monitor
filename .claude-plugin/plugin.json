@@ -1,0 +1,18 @@
+{
+  "name": "prompt-quality-monitor",
+  "version": "0.1.0",
+  "description": "Scores the prompts you have actually typed into Claude Code against the expert rubric from Thorgeirsson, Weidmann & Su (CHI '26), and reports which habits track with rework. Reads your own session logs; no third-party dependencies.",
+  "author": {
+    "name": "yunhui-chae-krafton"
+  },
+  "keywords": [
+    "prompt-quality",
+    "self-review",
+    "analytics",
+    "vibe-coding",
+    "session-logs",
+    "korean"
+  ],
+  "skills": "./skills/",
+  "license": "MIT"
+}
