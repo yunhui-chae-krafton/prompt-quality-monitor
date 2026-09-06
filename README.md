@@ -66,7 +66,7 @@ r = .02로 사실상 없다 — 경로·식별자·수치를 세는 일과 "지�
 Claude Code 플러그인이다. 두 줄이면 끝난다.
 
 ```
-/plugin marketplace add <이 레포 주소>
+/plugin marketplace add yunhui-chae-krafton/prompt-quality-monitor
 /plugin install prompt-quality-monitor@prompt-quality-monitor
 ```
 
@@ -91,6 +91,8 @@ pip install kiwipiepy
 레포를 받아 그냥 실행해도 된다.
 
 ```bash
+git clone https://github.com/yunhui-chae-krafton/prompt-quality-monitor
+cd prompt-quality-monitor
 python3 scripts/pqm.py analyze
 ```
 

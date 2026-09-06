@@ -14,5 +14,7 @@
     "korean"
   ],
   "skills": "./skills/",
-  "license": "MIT"
+  "license": "MIT",
+  "repository": "https://github.com/yunhui-chae-krafton/prompt-quality-monitor",
+  "homepage": "https://github.com/yunhui-chae-krafton/prompt-quality-monitor"
 }
