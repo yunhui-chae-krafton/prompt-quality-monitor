@@ -174,6 +174,41 @@ def _parse_array(body):
     return json.loads(body)
 
 
+def _read_envelope(stdout):
+    """Pull the result envelope out of whatever shape the CLI produced.
+
+    `--output-format json` returns one object. `--output-format stream-json`
+    returns one object per line and the payload is the last of them. Assuming
+    either shape means a call that already cost money gets thrown away, so
+    accept both.
+    """
+    stdout = (stdout or "").strip()
+    if not stdout:
+        raise RuntimeError("empty response from grading command")
+    try:
+        return json.loads(stdout)
+    except json.JSONDecodeError:
+        pass
+
+    envelope = None
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(message, dict) and message.get("type") == "result":
+            envelope = message
+    if envelope is None:
+        raise RuntimeError(
+            "could not find a result envelope in the response "
+            f"({len(stdout.splitlines())} lines)"
+        )
+    return envelope
+
+
 def _call_claude(payload, model, timeout):
     """One grading call through the `claude` CLI.
 
@@ -193,7 +228,7 @@ def _call_claude(payload, model, timeout):
     if proc.returncode != 0:
         raise RuntimeError(f"claude CLI failed: {proc.stderr[:400]}")
 
-    envelope = json.loads(proc.stdout)
+    envelope = _read_envelope(proc.stdout)
     return _parse_array(envelope.get("result")), envelope.get("total_cost_usd", 0.0)
 
 
@@ -210,19 +245,39 @@ def _call_command(payload, command, timeout):
     if proc.returncode != 0:
         raise RuntimeError(f"command failed ({proc.returncode}): "
                            f"{(proc.stderr or proc.stdout)[:400]}")
-    return _parse_array(proc.stdout), 0.0
+
+    # An arbitrary command may hand back a bare array or an agent CLI's
+    # envelope; try the array first and fall back to unwrapping.
+    try:
+        return _parse_array(proc.stdout), 0.0
+    except (json.JSONDecodeError, ValueError):
+        envelope = _read_envelope(proc.stdout)
+        return _parse_array(envelope.get("result")), 0.0
+
+
+#: Consecutive failures that mean the problem is systematic, not transient.
+#: Past this we stop rather than keep paying to rediscover the same fault.
+MAX_CONSECUTIVE_FAILURES = 2
 
 
 def grade(records, cache_path, limit=300, batch_size=12, backend="claude",
           model="claude-sonnet-5", command=None, timeout=300, progress=None):
-    """Grade the sample with a subprocess backend, reusing the cache."""
+    """Grade the sample with a subprocess backend, reusing the cache.
+
+    Failures are counted, not just logged. A batch that fails after the
+    request went out has already cost money, so a systematic fault — a bad
+    envelope shape, an expired login, a model that stopped emitting arrays —
+    must stop the run instead of repeating once per batch.
+    """
     if backend == "command" and not command:
         raise ValueError("backend 'command' needs --command")
 
     cache = load_cache(cache_path)
+    before = len(cache)
     todo = pending(records, cache, limit)
 
     spent = 0.0
+    failures, streak, last_error = 0, 0, None
     for start in range(0, len(todo), batch_size):
         batch = todo[start: start + batch_size]
         items = [{"id": _digest(r["text"]), "prompt": r["text"][:1800]}
@@ -234,11 +289,20 @@ def grade(records, cache_path, limit=300, batch_size=12, backend="claude",
                 graded, cost = _call_claude(payload, model, timeout)
             else:
                 graded, cost = _call_command(payload, command, timeout)
-        except Exception as exc:  # keep partial progress on failure
+        except Exception as exc:
+            failures += 1
+            streak += 1
+            last_error = str(exc)
             if progress:
                 progress(f"batch {start // batch_size + 1} failed: {exc}")
+            if streak >= MAX_CONSECUTIVE_FAILURES:
+                if progress:
+                    progress(f"연속 {streak}회 실패 — 같은 원인이 반복되고 있어 "
+                             f"중단합니다. 남은 배치는 호출하지 않습니다.")
+                break
             continue
 
+        streak = 0
         spent += cost
         by_id = {g.get("id"): g for g in graded if isinstance(g, dict)}
         for rec in batch:
@@ -252,7 +316,14 @@ def grade(records, cache_path, limit=300, batch_size=12, backend="claude",
             progress(f"graded {min(start + batch_size, len(todo))}/{len(todo)}{note}")
 
     attach(records, cache)
-    return {"graded": len(cache), "new": len(todo), "cost_usd": spent}
+    return {
+        "graded": len(cache),
+        "new": len(todo),
+        "cached": len(cache) - before,
+        "cost_usd": spent,
+        "failed_batches": failures,
+        "last_error": last_error,
+    }
 
 
 # --------------------------------------------------------------------------

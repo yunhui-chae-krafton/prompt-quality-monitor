@@ -104,7 +104,16 @@ def cmd_grade(args):
         sys.exit(str(exc))
     cost = (f", 이번 비용 ${info['cost_usd']:.2f}"
             if args.backend == "claude" else "")
-    print(f"채점 완료: 신규 {info['new']}개, 누적 {info['graded']}개{cost}")
+
+    if info["failed_batches"]:
+        # A failed batch still made the call, so say what it cost and refuse to
+        # report success — the old message claimed completion either way.
+        print(f"채점 실패: 배치 {info['failed_batches']}개 실패, "
+              f"실제 저장 {info['cached']}개{cost}")
+        print(f"  마지막 오류: {info['last_error']}")
+        sys.exit(1)
+
+    print(f"채점 완료: 신규 {info['cached']}개, 누적 {info['graded']}개{cost}")
     _write_outputs(result, args.out)
     return result
 
